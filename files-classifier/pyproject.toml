@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "koppai-file-classifier"
+version = "0.0.0"
+description = "train a classifier to classify file based on attributes extracted from tools like file, exiftool, pdfinfo etc"
+authors = ["Vanangamudi <selva.developer@gmail.com>"]
+license = "GPL3"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
