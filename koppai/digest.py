@@ -1,4 +1,3 @@
-
 # * Standard Import
 import glob
 import argparse
@@ -21,32 +20,54 @@ from pprint import pformat, pprint
 import exiftool
 from pypdf import PdfWriter, PdfReader
 
-# * logging
-logging.basicConfig()
-log = logging.getLogger()
-log.setLevel(logging.INFO)
-
 # * imports
 import conf
 
 # * Global variables
 
 
+# * logging
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+
+SESSION_ID = datetime.now().isoformat(timespec='seconds')
+LOG_FILE = f'{conf.LOG_DIR}/{SESSION_ID}.log'
+
+handler = logging.FileHandler(LOG_FILE)        
+handler.setFormatter(formatter)
+
+log = logging.getLogger()
+log.setLevel(logging.INFO)
+log.addHandler(handler)
+
 # * Index
+def _check_path(path, name):
+    if not os.path.exists(path):
+        print(f'{name} {path} does not exist!')
+        key  = input('want to create it? [Y/n]: ')
+        if key.lower() == 'y':
+            print('creating {name} directory... ')
+            os.makedirs(path)
+            print('DONE.')
+        else:
+            print('cannot proceed further, exiting.... ')
+            exit(0)
+
 class Index:
     ENUM_ADD_SUCCESS = 0
     ENUM_DUPLICATE = 1
     def __init__(self, rootpath, name, fieldnames):
         self.rootpath = rootpath
         self.name = name
-        self.index_path = f'{rootpath}/{name}__index.csv'
-        self.duplicates_path = f'{rootpath}/{name}__duplicates_index.csv'
         self.index = {}
         self.fieldnames = fieldnames
         self.duplicates = defaultdict(list)
 
+        self.index_path = f'{conf.INDEX_DIR}/{name}.csv'
+        self.duplicates_path = f'{conf.INDEX_DIR}/{name}_duplicates.csv'
+
+        _check_path(conf.INDEX_DIR, 'index directory')
         self.load()
-        
+                
     def add(self, key, record):
         if key in self.index:
             duplicate = self.index[key]
@@ -178,6 +199,7 @@ def make_good_filename(filepath):
 class Manager:
     def __init__(self, args):
         self.args = args
+        self.session_id = datetime.now().isoformat(timespec='seconds')
         self.index = Index(
             conf.KOPPAI_ROOT,
             name='files',
@@ -201,20 +223,8 @@ class Manager:
         self._check_store()
 
     def _check_store(self):
-        return self._check_path(conf.KOPPAI_ROOT)
+        return _check_path(conf.KOPPAI_ROOT, 'root directory')
     
-    def _check_path(self, path):
-        if not os.path.exists(path):
-            print(f'koppai root {path} does not exist!')
-            key  = input('want to create it? [Y/n]: ')
-            if key.lower() == 'y':
-                print('creating directory... ')
-                os.makedirs(path)
-                print('DONE.')
-            else:
-                print('cannot proceed further, exiting.... ')
-                exit(0)
-
     def make_dest_path(self, short_hash):
         dest_path = '{}/{}/{}'.format(short_hash[-6:-4],
                                       short_hash[-4:-2],
