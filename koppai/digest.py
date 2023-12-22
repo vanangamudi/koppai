@@ -1,16 +1,33 @@
-# * Import
+
+# * Standard Import
 import glob
 import argparse
 import sys
 import os
 import csv
 
+import re
+import json
 import subprocess
 import hashlib
-import exiftool
-import conf
+import pathlib
+import logging
 
+from datetime import datetime
 from collections import OrderedDict, defaultdict
+from pprint import pformat, pprint
+
+# * third party libraries
+import exiftool
+from pypdf import PdfWriter, PdfReader
+
+# * logging
+logging.basicConfig()
+log = logging.getLogger()
+log.setLevel(logging.INFO)
+
+# * imports
+import conf
 
 # * Global variables
 
@@ -19,10 +36,11 @@ from collections import OrderedDict, defaultdict
 class Index:
     ENUM_ADD_SUCCESS = 0
     ENUM_DUPLICATE = 1
-    def __init__(self, rootpath, fieldnames):
+    def __init__(self, rootpath, name, fieldnames):
         self.rootpath = rootpath
-        self.index_path = f'{rootpath}/index.csv'
-        self.duplicates_path = f'{rootpath}/duplicates_index.csv'
+        self.name = name
+        self.index_path = f'{rootpath}/{name}__index.csv'
+        self.duplicates_path = f'{rootpath}/{name}__duplicates_index.csv'
         self.index = {}
         self.fieldnames = fieldnames
         self.duplicates = defaultdict(list)
@@ -31,8 +49,13 @@ class Index:
         
     def add(self, key, record):
         if key in self.index:
-            print(f'file already exists: {record["original_path"]} with same hash {key}')
-            self.duplicates[key].append(record)
+            duplicate = self.index[key]
+            if not duplicate['original_path'] == record['original_path']:
+                print(f'file already exists:\
+                {record["original_path"]} with same hash {key}\
+                form {duplicate["original_path"]}')
+                
+                self.duplicates[key].append(record)
             return self.ENUM_DUPLICATE
         else:
             self.index[key] = record
@@ -48,9 +71,9 @@ class Index:
             with open(self.index_path) as ip:
                 reader = csv.DictReader(ip, fieldnames=self.fieldnames)
                 for record in reader:
-                    self.index[record[0]] = record
+                    self.index[record['short_hash']] = record
         except:
-            pass
+            log.exception('reading index')
         
     def write_index(self):
         with open(self.index_path, 'w') as of:
@@ -72,9 +95,9 @@ class Index:
             with open(self.duplicates_path) as ip:
                 reader = csv.DictReader(ip, fieldnames=self.fieldnames)
                 for record in reader:
-                    self.duplicates[record[0]].append(record)
+                    self.duplicates[record['short_hash']].append(record)
         except:
-            pass
+            log.exception('reading duplicates')
             
     def save(self):
         self.write_index()
@@ -101,22 +124,82 @@ def hash_file(filepath):
             
     return sha256_hash.hexdigest()
 
+def hash_string(string_, encoding='utf-8'):
+    return hashlib.sha256(string_.encode(encoding)).hexdigest()
+
+def hash_dict(dict_):
+    return hash_string(json.dumps(dict_))
+    
+def get_dir_structure(path):
+    dir_structure = {
+        'name': os.path.basename(path)
+    }
+    
+    if os.path.isfile(path):
+        dir_structure['type'] = "file"
+    else:
+        dir_structure['type'] = "directory"
+        dir_structure['children'] = [
+            get_dir_structure(os.path.join(path, name))
+            for name in os.listdir(path)
+        ]
+                
+    return dir_structure
+
+def get_tags(path):
+    return ['tag', 'tag list']
+
 def check_filepath(filename):
     if '|' not in filename:
         return True
     return False
 
+def sanitize_text(text):
+    text = re.sub('&#x.*?;', '', text)
+    text = re.sub('[/\\?%*:|"<>]', '', text)
+    return text
+        
+def make_good_filename(filepath):
+    name = os.path.basename(filepath)
+    if os.path.splitext(filepath)[1].lower().strip('.') == 'pdf':
+        with open(filepath, 'rb') as f:
+            try:
+                pdf_reader = PdfReader(f) 
+                name = pdf_reader.metadata.title
+            except:
+                log.exception(filepath)
+    if not name:
+        name = os.path.basename(os.path.splitext(filepath)[0])
+    name = re.sub(r'\s+', ' ', name)
+    name = name.lower().replace(' ', '-')
+    return name
+
 # * Manager
 class Manager:
     def __init__(self, args):
-        self.index = Index(conf.KOPPAI_ROOT,
-                           fieldnames = [
-                               'short_hash',
-                               'extension',
-                               'original_path'
-                           ])
-        self._check_store()
+        self.args = args
+        self.index = Index(
+            conf.KOPPAI_ROOT,
+            name='files',
+            fieldnames = [
+                'short_hash',
+                'extension',
+                'path',
+                'original_path',
+
+            ])
         
+        self.dir_structure_index = Index(
+            conf.KOPPAI_ROOT,
+            name='directory_structure',
+            fieldnames=[
+                'dir_hash',
+                'collection',
+                'structure_json'
+            ]
+        )
+        self._check_store()
+
     def _check_store(self):
         return self._check_path(conf.KOPPAI_ROOT)
     
@@ -140,7 +223,8 @@ class Manager:
         return dest_path, dest_full_path
 
 
-    def add_file(self, filepath, move_p=False):
+    def add_file(self, filepath, dir_hash, move_p=False):
+        filename = os.path.basename(filepath)
         filepath = os.path.abspath(filepath)
         ext = os.path.splitext(filepath)[1].strip('.')
         
@@ -148,12 +232,27 @@ class Manager:
         short_hash = hash_[-6:]
         dest_path, dest_full_path = self.make_dest_path(hash_)
 
-        dest_path = f'{dest_path}.{ext}'
-        dest_full_path = f'{dest_full_path}.{ext}'
+        mtime = datetime.fromtimestamp(
+            os.path.getmtime(filepath)).isoformat(timespec="seconds")
+
+        tags = get_tags(filepath)
+        tags = '-'.join([
+            tag
+            .replace(' ', '')
+            .lower()
+            for tag in tags
+        ])
+
+        filename = make_good_filename(filepath)
+        new_name = f'{mtime}--{filename}--{dir_hash}--{tags}.{ext}'
+        
+        dest_path = f'{dest_path}/{new_name}'
+        dest_full_path = f'{dest_full_path}/{new_name}'
 
         record = OrderedDict({
             'short_hash': short_hash,
             'extension' : ext,
+            'path': dest_full_path,
             'original_path' : filepath,
         })
         
@@ -175,36 +274,56 @@ class Manager:
             self.index.write_index()
             return dest_path
 
-    def add_dir(self, directory):
+    def add_dir(self, directory, dir_hash, collection):
         paths = []
         for root, dirs, files in os.walk(directory):
             for name in files:
-                path = self.add_file(os.path.join(root, name))
+                path = self.add_file(os.path.join(root, name),
+                                     dir_hash)
                 paths.append(path)
             for name in dirs:
-                path = self.add_dir(os.path.join(root, name))
+                path = self.add_dir(os.path.join(root, name),
+                                    dir_hash,
+                                    collection)
                 paths.extend(path)
         return paths
 
-    def add(self, path):
+    def add(self, path, collection):
+        path = os.path.abspath(path)
         if os.path.isdir(path):
-            dest_path = self.add_dir(path)
+            dir_structure = get_dir_structure(path)
+            dir_hash = hash_dict(dir_structure)
+            dir_hash = dir_hash[-6:]
+            self.dir_structure_index.add(dir_hash, {
+                'dir_hash': dir_hash,
+                'collection': collection,
+                'structure': json.dumps(dir_structure)
+            })
+
+            dest_path = self.add_dir(path, dir_hash, collection)
         elif os.path.isfile(path):
             dest_path = self.add_file(path)
 
         return dest_path
+    
+    def info(self, query):
+        return self.index.index[query]
 
 def parse_args():
     parser = argparse.ArgumentParser('vizhungi')
     subparsers = parser.add_subparsers()
-    parser.add_argument('filepath',
-                    help='path to the file; add or retrieve info about file')
-    
     add_parser = subparsers.add_parser('add')
     add_parser.add_argument('--task', default='add')
+    add_parser.add_argument('filepath',
+                    help='path to the file; add or retrieve info about file')
+    add_parser.add_argument('collection',
+                        help='collection name',
+                        default='general')
+    
 
     info_parser = subparsers.add_parser('info')
     info_parser.add_argument('--task', default='info')
+    info_parser.add_argument('query')
    
     return parser.parse_args()
 
@@ -212,11 +331,12 @@ def parse_args():
 if __name__ == '__main__':
 
     args = parse_args()
+    pprint(args)
     manager = Manager(args)
     if args.task == 'add':
-        path = manager.add(args.filepath)
-        print('file: {} added to store addr: {}'.format(args.filepath, path))
+        path = manager.add(args.filepath, args.collection)
+        #print('file: {} added to store addr: {}'.format(args.filepath, path))
     if args.task == 'info':
-        manager.info(filepath)
+        pprint(manager.info(args.query))
 
     manager.index.save()
