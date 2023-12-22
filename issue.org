@@ -1,0 +1,68 @@
+* illegal characters in filenames
+
+Look at the output of the filename in the output. tokens like = &#x2013;= cannot be part of the filename, we need sanitize the filenames such that these kind of token do not enter the data store index.
+
+#+begin_src shell
+>>> from pypdf import PdfWriter, PdfReader
+
+def get_pdf_title(pdf_file_path):
+    with open(pdf_file_path, 'rb') as f:
+        pdf_reader = PdfReader(f) 
+        return pdf_reader.metadata.title
+
+>>> >>> ... ... ... ... >>> 
+>>> get_pdf_title("/home/vanangamudi/ko-pa-ni/mattravai/papers/004635277f959e946b000000.pdf")
+'A time-geographical approach to the study of everyday life of individuals &#x2013; a challenge of complexity'
+#+end_src
+
+** Solution
+
+*** python
+
+#+begin_src python :results output code
+  from pypdf import PdfWriter, PdfReader
+  import re
+  def get_pdf_title(pdf_file_path):
+      with open(pdf_file_path, 'rb') as f:
+          pdf_reader = PdfReader(f) 
+          return pdf_reader.metadata.title
+
+  name= get_pdf_title(
+      "/home/vanangamudi/ko-pa-ni/mattravai/papers/PWKI81~8.PDF"x)
+
+  name = name.replace('to', '&#x2020;')
+  name = re.sub('&#x.*?;', '', name)
+  name = re.sub('[/\\?%*:|"<>]', '', name)
+  print(name)
+
+#+end_src
+
+#+RESULTS:
+#+begin_src python
+Traceback (most recent call last):
+  File "<stdin>", line 11, in <module>
+AttributeError: 'NoneType' object has no attribute 'replace'
+[ Babel evaluation exited with code 1 ]
+#+end_src
+
+*** [[https://stackoverflow.com/questions/42210199/remove-illegal-characters-from-a-file-name-but-leave-spaces/42210346#42210346][javascript - Remove illegal characters from a file name but leave spaces - St...]]
+Illegal characters are listed [[https://en.wikipedia.org/wiki/Filename#Reserved_characters_and_words][*here*]]. To replace them use this regex =/[/\\?%*:|"<>]/g=  like this:
+
+#+begin_src js
+  var filename = "f?:i/le>  n%a|m\\e.ext";
+  filename = filename.replace(/[/\\?%*:|"<>]/g, '-');
+  console.log(filename);
+#+end_src
+
+#+begin_src python :results output code
+  import re
+  string_ = 'A time-geographical approach to the study of everyday life of individuals &#x2013; a challenge of complexity'
+  string_ = re.sub('[/\\?%*:|"<>]', '', string_)
+  print(string_)
+
+#+end_src
+
+#+RESULTS:
+#+begin_src python
+A time-geographical approach to the study of everyday life of individuals &#x2013; a challenge of complexity
+#+end_src

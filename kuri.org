@@ -1,0 +1,1 @@
+* [[https://sqlite.org/forum/info/f0af7ad6c8e7961f][SQLite Forum: Feature Request: Option to store sqlite db in plain text format]]
