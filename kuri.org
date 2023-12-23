@@ -1,1 +1,3 @@
 * [[https://sqlite.org/forum/info/f0af7ad6c8e7961f][SQLite Forum: Feature Request: Option to store sqlite db in plain text format]]
+* PROJ Gui file manager overlay over koppai
+When a file is dragged from this file manager it will point to the short_hash location making the file accessible from anywhere in the system, without breaking the link
