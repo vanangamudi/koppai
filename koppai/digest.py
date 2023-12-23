@@ -25,11 +25,19 @@ import conf
 
 # * Global variables
 
+# * necessary utils
+def get_timestamp_as_filename(timestamp=None):
+    if not timestamp:
+        timestamp = datetime.now()
+    filename = timestamp.isoformat(timespec='seconds')
+    filename = filename.replace(':', '-')
+    return filename
 
 # * logging
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 
-SESSION_ID = datetime.now().isoformat(timespec='seconds')
+SESSION_START_TIME = datetime.now()
+SESSION_ID = get_timestamp_as_filename(SESSION_START_TIME)
 LOG_FILE = f'{conf.LOG_DIR}/{SESSION_ID}.log'
 
 handler = logging.FileHandler(LOG_FILE)        
@@ -158,11 +166,14 @@ def get_dir_structure(path):
     
     if os.path.isfile(path):
         dir_structure['type'] = "file"
+        #dir_structure['size'] = os.stat(path).st_size
     else:
+        children = os.listdir(path)
         dir_structure['type'] = "directory"
+        dir_structure['count'] = len(children)
         dir_structure['children'] = [
             get_dir_structure(os.path.join(path, name))
-            for name in os.listdir(path)
+            for name in children
         ]
                 
     return dir_structure
@@ -222,6 +233,10 @@ class Manager:
         )
         self._check_store()
 
+    def save(self):
+        self.index.save()
+        self.directory_structure_index.save()
+        
     def _check_store(self):
         return _check_path(conf.KOPPAI_ROOT, 'root directory')
     
@@ -242,8 +257,8 @@ class Manager:
         short_hash = hash_[-6:]
         dest_path, dest_full_path = self.make_dest_path(hash_)
 
-        mtime = datetime.fromtimestamp(
-            os.path.getmtime(filepath)).isoformat(timespec="seconds")
+        mtime = get_timestamp_as_filename(
+            datetime.fromtimestamp(os.path.getmtime(filepath)))
 
         tags = get_tags(filepath)
         tags = '-'.join([
@@ -269,17 +284,25 @@ class Manager:
         if self.index.add(short_hash, record) == Index.ENUM_DUPLICATE:
             return self.index.index[short_hash]
         else:
-            command = "cp -p"
+            copy_command = "cp -p"
             if move_p:
-                command = "mv"
+                copy_command = "mv"
 
-            if False:
-                subprocess.Popen(
-                    f'{command} filepath {dest_path}',
+            commands = [
+                f'mkdir -p {os.path.dirname(dest_full_path)}',    #this comma is important
+                f'{copy_command} "{filepath}" "{dest_full_path}"',
+            ]
+
+            for command in commands:
+                log.debug(f'executing:  <{command}>...')
+                output = subprocess.Popen(
+                    command,
                     shell=True,
                     stdout=subprocess.PIPE
                 ).stdout.read()
-
+                
+                log.debug(output)
+                    
             self.index.add(record['short_hash'], record)
             self.index.write_index()
             return dest_path
@@ -321,7 +344,10 @@ class Manager:
 
 def parse_args():
     parser = argparse.ArgumentParser('vizhungi')
+    parser.add_argument('--verbose', '-v', action='store_true')
+    
     subparsers = parser.add_subparsers()
+
     add_parser = subparsers.add_parser('add')
     add_parser.add_argument('--task', default='add')
     add_parser.add_argument('filepath',
@@ -330,7 +356,6 @@ def parse_args():
                         help='collection name',
                         default='general')
     
-
     info_parser = subparsers.add_parser('info')
     info_parser.add_argument('--task', default='info')
     info_parser.add_argument('query')
@@ -349,4 +374,5 @@ if __name__ == '__main__':
     if args.task == 'info':
         pprint(manager.info(args.query))
 
-    manager.index.save()
+    
+    
